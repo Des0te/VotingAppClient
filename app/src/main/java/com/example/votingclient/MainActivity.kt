@@ -1,5 +1,8 @@
 package com.example.votingclient
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -58,6 +61,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -81,6 +85,7 @@ import com.example.votingclient.ui.VotingViewModelFactory
 import com.example.votingclient.ui.theme.VotingClientTheme
 import org.koin.android.ext.android.inject
 import org.koin.core.component.KoinComponent
+import java.util.Calendar
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -563,8 +568,8 @@ private fun CreatePollScreen(
     var multiple by remember { mutableStateOf(false) }
     var anonymous by remember { mutableStateOf(false) }
     var maxChoices by remember { mutableStateOf("2") }
-    var startsAt by remember { mutableStateOf(defaultDate(5 * 60 * 1000L)) }
-    var endsAt by remember { mutableStateOf(defaultDate(24 * 60 * 60 * 1000L)) }
+    var startsAtMillis by remember { mutableStateOf(System.currentTimeMillis() + 5 * 60 * 1000L) }
+    var endsAtMillis by remember { mutableStateOf(System.currentTimeMillis() + 24 * 60 * 60 * 1000L) }
 
     Scaffold(
         topBar = {
@@ -620,10 +625,18 @@ private fun CreatePollScreen(
                 }
             }
             item {
-                OutlinedTextField(startsAt, { startsAt = it }, label = { Text("Дата начала") }, modifier = Modifier.fillMaxWidth())
+                DateTimePickerButton(
+                    label = "Дата начала",
+                    millis = startsAtMillis,
+                    onChanged = { startsAtMillis = it },
+                )
             }
             item {
-                OutlinedTextField(endsAt, { endsAt = it }, label = { Text("Дата окончания") }, modifier = Modifier.fillMaxWidth())
+                DateTimePickerButton(
+                    label = "Дата окончания",
+                    millis = endsAtMillis,
+                    onChanged = { endsAtMillis = it },
+                )
             }
             item {
                 Button(
@@ -634,8 +647,8 @@ private fun CreatePollScreen(
                             CreatePollRequest(
                                 question = question,
                                 options = options.lines().map { it.trim() }.filter { it.isNotBlank() },
-                                startsAt = startsAt,
-                                endsAt = endsAt,
+                                startsAt = isoDate(startsAtMillis),
+                                endsAt = isoDate(endsAtMillis),
                                 choiceType = if (multiple) "MULTIPLE" else "SINGLE",
                                 anonymous = anonymous,
                                 maxChoices = maxChoices.toIntOrNull() ?: 1,
@@ -650,6 +663,26 @@ private fun CreatePollScreen(
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DateTimePickerButton(
+    label: String,
+    millis: Long,
+    onChanged: (Long) -> Unit,
+) {
+    val context = LocalContext.current
+
+    Column {
+        Text(label, style = MaterialTheme.typography.bodyMedium)
+        Spacer(Modifier.height(6.dp))
+        OutlinedButton(
+            onClick = { showDateTimePicker(context, millis, onChanged) },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(dateTimeLabel(millis))
         }
     }
 }
@@ -685,8 +718,50 @@ private fun CenteredColumn(content: @Composable ColumnScope.() -> Unit) {
     )
 }
 
-private fun defaultDate(offsetMs: Long): String {
+private fun showDateTimePicker(
+    context: Context,
+    currentMillis: Long,
+    onChanged: (Long) -> Unit,
+) {
+    val calendar = Calendar.getInstance().apply {
+        timeInMillis = currentMillis
+    }
+    DatePickerDialog(
+        context,
+        { _, year, month, day ->
+            val selected = Calendar.getInstance().apply {
+                timeInMillis = currentMillis
+                set(Calendar.YEAR, year)
+                set(Calendar.MONTH, month)
+                set(Calendar.DAY_OF_MONTH, day)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            TimePickerDialog(
+                context,
+                { _, hour, minute ->
+                    selected.set(Calendar.HOUR_OF_DAY, hour)
+                    selected.set(Calendar.MINUTE, minute)
+                    onChanged(selected.timeInMillis)
+                },
+                selected.get(Calendar.HOUR_OF_DAY),
+                selected.get(Calendar.MINUTE),
+                true,
+            ).show()
+        },
+        calendar.get(Calendar.YEAR),
+        calendar.get(Calendar.MONTH),
+        calendar.get(Calendar.DAY_OF_MONTH),
+    ).show()
+}
+
+private fun dateTimeLabel(millis: Long): String {
+    val format = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale("ru", "RU"))
+    return format.format(Date(millis))
+}
+
+private fun isoDate(millis: Long): String {
     val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
     format.timeZone = TimeZone.getTimeZone("UTC")
-    return format.format(Date(System.currentTimeMillis() + offsetMs))
+    return format.format(Date(millis))
 }

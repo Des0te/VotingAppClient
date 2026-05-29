@@ -10,6 +10,7 @@ import com.example.votingclient.data.model.PollResponse
 import com.example.votingclient.data.model.ResultsResponse
 import com.example.votingclient.data.model.UserResponse
 import com.example.votingclient.data.repository.VotingRepository
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -37,6 +38,7 @@ class VotingViewModel(
 ) : ViewModel() {
     var state = androidx.compose.runtime.mutableStateOf(VotingUiState())
         private set
+    private var historyJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -45,14 +47,26 @@ class VotingViewModel(
             }
         }
         viewModelScope.launch {
-            settingsStore.history.collectLatest { value ->
-                state.value = state.value.copy(history = value)
-            }
-        }
-        viewModelScope.launch {
             sessionStore.user.collectLatest { user ->
-                state.value = state.value.copy(user = user)
-                if (user != null) loadActive()
+                historyJob?.cancel()
+                state.value = state.value.copy(
+                    user = user,
+                    history = emptyList(),
+                    searchText = "",
+                    searchResults = emptyList(),
+                    selectedPoll = null,
+                    results = null,
+                )
+                if (user != null) {
+                    historyJob = viewModelScope.launch {
+                        settingsStore.historyFor(user.id).collectLatest { value ->
+                            state.value = state.value.copy(history = value)
+                        }
+                    }
+                    loadActive()
+                } else {
+                    state.value = state.value.copy(activePolls = emptyList())
+                }
             }
         }
     }
@@ -77,7 +91,7 @@ class VotingViewModel(
 
     fun logout() = viewModelScope.launch {
         sessionStore.clear()
-        state.value = VotingUiState(darkTheme = state.value.darkTheme, history = state.value.history)
+        state.value = VotingUiState(darkTheme = state.value.darkTheme)
     }
 
     fun toggleTheme() = viewModelScope.launch {
@@ -112,7 +126,7 @@ class VotingViewModel(
     }
 
     fun openPoll(poll: PollResponse) = viewModelScope.launch {
-        settingsStore.addHistory(poll.question)
+        settingsStore.addHistory(state.value.user?.id, poll.question)
         runLoading {
             val fullPoll = repository.poll(poll.id)
             val result = runCatching { repository.results(poll.id) }.getOrNull()
@@ -124,8 +138,13 @@ class VotingViewModel(
         val poll = state.value.selectedPoll ?: return@launch
         runLoading {
             val response = repository.vote(poll.id, optionIds)
-            val result = if (poll.anonymous) null else response.results ?: runCatching { repository.results(poll.id) }.getOrNull()
-            state.value = state.value.copy(message = response.message, results = result)
+            val freshPoll = runCatching { repository.poll(poll.id) }.getOrNull() ?: poll
+            val result = if (freshPoll.anonymous) null else runCatching { repository.results(poll.id) }.getOrNull() ?: response.results
+            state.value = state.value.copy(
+                selectedPoll = freshPoll,
+                message = response.message,
+                results = result,
+            )
         }
     }
 
@@ -139,7 +158,7 @@ class VotingViewModel(
     }
 
     fun clearHistory() = viewModelScope.launch {
-        settingsStore.clearHistory()
+        settingsStore.clearHistory(state.value.user?.id)
     }
 
     fun clearMessage() {
