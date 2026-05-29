@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -37,6 +39,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -79,6 +82,7 @@ import com.example.votingclient.data.model.CreatePollRequest
 import com.example.votingclient.data.model.PollResponse
 import com.example.votingclient.data.model.ResultsResponse
 import com.example.votingclient.data.repository.VotingRepository
+import com.example.votingclient.ui.PollFilter
 import com.example.votingclient.ui.VotingUiState
 import com.example.votingclient.ui.VotingViewModel
 import com.example.votingclient.ui.VotingViewModelFactory
@@ -321,6 +325,12 @@ private fun HomeScreen(
         ) {
             SearchPanel(state, viewModel)
             Spacer(Modifier.height(12.dp))
+            if (state.user?.role == "ADMIN") {
+                Text("Администратор", color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(8.dp))
+            }
+            FilterRow(selected = state.filter, onSelected = viewModel::setFilter)
+            Spacer(Modifier.height(12.dp))
             if (state.isLoading) {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally))
             }
@@ -339,10 +349,12 @@ private fun HomeScreen(
                     PollItem(
                         poll = poll,
                         currentUserId = state.user?.id,
+                        isAdmin = state.user?.role == "ADMIN",
                         onClick = {
                             viewModel.openPoll(poll)
                             navController.navigate("detail")
                         },
+                        onDelete = { viewModel.deletePoll(poll) },
                     )
                 }
             }
@@ -418,9 +430,45 @@ private fun SearchPanel(state: VotingUiState, viewModel: VotingViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PollItem(poll: PollResponse, currentUserId: String?, onClick: () -> Unit) {
+private fun FilterRow(
+    selected: PollFilter,
+    onSelected: (PollFilter) -> Unit,
+) {
+    val items = listOf(
+        PollFilter.ALL to "Все",
+        PollFilter.ACTIVE to "Активные",
+        PollFilter.SOON to "Скоро",
+        PollFilter.FINISHED to "Завершены",
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items.forEach { (filter, title) ->
+            FilterChip(
+                selected = selected == filter,
+                onClick = { onSelected(filter) },
+                label = { Text(title) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PollItem(
+    poll: PollResponse,
+    currentUserId: String?,
+    isAdmin: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
     val status = pollStatus(poll)
+    val canDelete = isAdmin || poll.authorId == currentUserId
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -433,6 +481,11 @@ private fun PollItem(poll: PollResponse, currentUserId: String?, onClick: () -> 
                 Text(poll.question, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 if (poll.authorId == currentUserId) {
                     Text("Моё", color = MaterialTheme.colorScheme.primary)
+                }
+                if (canDelete) {
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = "Удалить")
+                    }
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -481,6 +534,8 @@ private fun DetailScreen(
             return@Scaffold
         }
 
+        val pollActive = pollStatus(poll) == PollStatus.ACTIVE
+
         LazyColumn(
             modifier = Modifier
                 .padding(padding)
@@ -499,7 +554,7 @@ private fun DetailScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
+                        .clickable(enabled = pollActive) {
                             selected = if (poll.choiceType == "SINGLE") {
                                 setOf(option.id)
                             } else if (selected.contains(option.id)) {
@@ -512,10 +567,15 @@ private fun DetailScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (poll.choiceType == "SINGLE") {
-                        RadioButton(selected = selected.contains(option.id), onClick = { selected = setOf(option.id) })
+                        RadioButton(
+                            selected = selected.contains(option.id),
+                            enabled = pollActive,
+                            onClick = { selected = setOf(option.id) },
+                        )
                     } else {
                         Checkbox(
                             checked = selected.contains(option.id),
+                            enabled = pollActive,
                             onCheckedChange = {
                                 selected = if (it) selected + option.id else selected - option.id
                             },
@@ -525,15 +585,14 @@ private fun DetailScreen(
                 }
             }
             item {
-                val active = pollStatus(poll) == PollStatus.ACTIVE
                 Button(
                     onClick = { onVote(selected.toList()) },
-                    enabled = active && selected.isNotEmpty() && !state.isLoading,
+                    enabled = pollActive && selected.isNotEmpty() && !state.isLoading,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("Голосовать")
                 }
-                if (!active) {
+                if (!pollActive) {
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = if (pollStatus(poll) == PollStatus.SOON) "Голосование скоро начнётся" else "Голосование завершено",
@@ -745,6 +804,8 @@ private enum class PollStatus(val text: String) {
     FINISHED("Завершено"),
 }
 
+private val APP_TIME_ZONE: TimeZone = TimeZone.getTimeZone("Europe/Moscow")
+
 @Composable
 private fun PollStatus.color() = when (this) {
     PollStatus.ACTIVE -> MaterialTheme.colorScheme.primary
@@ -753,6 +814,12 @@ private fun PollStatus.color() = when (this) {
 }
 
 private fun pollStatus(poll: PollResponse): PollStatus {
+    when (poll.status.uppercase(Locale.US)) {
+        "ACTIVE" -> return PollStatus.ACTIVE
+        "SOON" -> return PollStatus.SOON
+        "FINISHED" -> return PollStatus.FINISHED
+    }
+
     val now = System.currentTimeMillis()
     val startsAt = parseServerDate(poll.startsAt) ?: return PollStatus.ACTIVE
     val endsAt = parseServerDate(poll.endsAt) ?: return PollStatus.ACTIVE
@@ -764,7 +831,7 @@ private fun pollStatus(poll: PollResponse): PollStatus {
 }
 
 private fun canShowResults(poll: PollResponse): Boolean =
-    !poll.anonymous || pollStatus(poll) == PollStatus.FINISHED
+    pollStatus(poll) != PollStatus.SOON && (!poll.anonymous || pollStatus(poll) == PollStatus.FINISHED)
 
 private fun localDate(value: String): String {
     val millis = parseServerDate(value) ?: return value
@@ -786,13 +853,13 @@ private fun showDateTimePicker(
     currentMillis: Long,
     onChanged: (Long) -> Unit,
 ) {
-    val calendar = Calendar.getInstance().apply {
+    val calendar = Calendar.getInstance(APP_TIME_ZONE).apply {
         timeInMillis = currentMillis
     }
     DatePickerDialog(
         context,
         { _, year, month, day ->
-            val selected = Calendar.getInstance().apply {
+            val selected = Calendar.getInstance(APP_TIME_ZONE).apply {
                 timeInMillis = currentMillis
                 set(Calendar.YEAR, year)
                 set(Calendar.MONTH, month)
@@ -820,6 +887,7 @@ private fun showDateTimePicker(
 
 private fun dateTimeLabel(millis: Long): String {
     val format = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale("ru", "RU"))
+    format.timeZone = APP_TIME_ZONE
     return format.format(Date(millis))
 }
 

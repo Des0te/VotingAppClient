@@ -9,6 +9,7 @@ import com.example.votingclient.data.model.ResultsResponse
 import com.example.votingclient.data.model.VoteRequest
 import com.example.votingclient.data.model.VoteResponse
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.Path
@@ -32,6 +33,9 @@ interface ApiService {
 
     @POST("polls")
     suspend fun createPoll(@Body request: CreatePollRequest): PollResponse
+
+    @DELETE("polls/{id}")
+    suspend fun deletePoll(@Path("id") id: String)
 
     @POST("polls/{id}/vote")
     suspend fun vote(

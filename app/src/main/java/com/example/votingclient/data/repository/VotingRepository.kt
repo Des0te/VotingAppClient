@@ -35,6 +35,8 @@ class VotingRepository(
 
     suspend fun createPoll(request: CreatePollRequest): PollResponse = request { api.createPoll(request) }
 
+    suspend fun deletePoll(id: String): Unit = request { api.deletePoll(id) }
+
     suspend fun vote(id: String, optionIds: List<String>): VoteResponse = request { api.vote(id, VoteRequest(optionIds)) }
 
     suspend fun results(id: String): ResultsResponse = request { api.results(id) }

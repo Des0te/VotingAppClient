@@ -51,6 +51,7 @@ data class PollResponse(
     val anonymous: Boolean,
     val authorId: String,
     val maxChoices: Int,
+    val status: String,
     val options: List<OptionResponse>,
 )
 

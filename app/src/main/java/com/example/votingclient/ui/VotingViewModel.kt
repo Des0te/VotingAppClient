@@ -14,6 +14,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
+enum class PollFilter {
+    ALL,
+    ACTIVE,
+    SOON,
+    FINISHED,
+}
+
 data class VotingUiState(
     val user: UserResponse? = null,
     val darkTheme: Boolean = false,
@@ -23,12 +30,21 @@ data class VotingUiState(
     val selectedPoll: PollResponse? = null,
     val results: ResultsResponse? = null,
     val searchText: String = "",
+    val filter: PollFilter = PollFilter.ALL,
     val isLoading: Boolean = false,
     val error: String? = null,
     val message: String? = null,
 ) {
     val polls: List<PollResponse>
-        get() = if (searchText.isBlank()) activePolls else searchResults
+        get() {
+            val source = if (searchText.isBlank()) activePolls else searchResults
+            return when (filter) {
+                PollFilter.ALL -> source
+                PollFilter.ACTIVE -> source.filter { it.hasStatus("ACTIVE") }
+                PollFilter.SOON -> source.filter { it.hasStatus("SOON") }
+                PollFilter.FINISHED -> source.filter { it.hasStatus("FINISHED") }
+            }
+        }
 }
 
 class VotingViewModel(
@@ -115,7 +131,7 @@ class VotingViewModel(
 
     fun loadActive() = viewModelScope.launch {
         runLoading {
-            state.value = state.value.copy(activePolls = repository.activePolls(), searchResults = emptyList())
+            reloadCurrentList(forceActive = true)
         }
     }
 
@@ -127,15 +143,23 @@ class VotingViewModel(
         }
         state.value = state.value.copy(searchText = query)
         runLoading {
-            state.value = state.value.copy(searchResults = repository.search(query))
+            reloadCurrentList()
         }
+    }
+
+    fun setFilter(filter: PollFilter) {
+        state.value = state.value.copy(filter = filter)
     }
 
     fun openPoll(poll: PollResponse) = viewModelScope.launch {
         settingsStore.addHistory(state.value.user?.id, poll.question)
         runLoading {
             val fullPoll = repository.poll(poll.id)
-            val result = runCatching { repository.results(poll.id) }.getOrNull()
+            val result = if (fullPoll.canLoadResults()) {
+                runCatching { repository.results(poll.id) }.getOrNull()
+            } else {
+                null
+            }
             state.value = state.value.copy(selectedPoll = fullPoll, results = result, message = null)
         }
     }
@@ -145,7 +169,11 @@ class VotingViewModel(
         runLoading {
             val response = repository.vote(poll.id, optionIds)
             val freshPoll = runCatching { repository.poll(poll.id) }.getOrNull() ?: poll
-            val result = if (freshPoll.anonymous) null else runCatching { repository.results(poll.id) }.getOrNull() ?: response.results
+            val result = if (freshPoll.canLoadResults()) {
+                runCatching { repository.results(poll.id) }.getOrNull() ?: response.results
+            } else {
+                null
+            }
             state.value = state.value.copy(
                 selectedPoll = freshPoll,
                 message = response.message,
@@ -160,6 +188,19 @@ class VotingViewModel(
             state.value = state.value.copy(message = "Голосование создано")
             openPoll(poll)
             onDone()
+        }
+    }
+
+    fun deletePoll(poll: PollResponse) = viewModelScope.launch {
+        runLoading {
+            repository.deletePoll(poll.id)
+            val selectedPoll = state.value.selectedPoll
+            state.value = state.value.copy(
+                selectedPoll = if (selectedPoll?.id == poll.id) null else selectedPoll,
+                results = if (selectedPoll?.id == poll.id) null else state.value.results,
+                message = "Голосование удалено",
+            )
+            reloadCurrentList()
         }
     }
 
@@ -181,6 +222,27 @@ class VotingViewModel(
             state.value = state.value.copy(isLoading = false)
         }
     }
+
+    private suspend fun reloadCurrentList(forceActive: Boolean = false) {
+        val query = state.value.searchText.trim()
+        if (forceActive || query.isBlank()) {
+            state.value = state.value.copy(
+                activePolls = repository.activePolls(),
+                searchResults = emptyList(),
+            )
+        } else {
+            state.value = state.value.copy(searchResults = repository.search(query))
+        }
+    }
+}
+
+private fun PollResponse.hasStatus(value: String): Boolean =
+    status.equals(value, ignoreCase = true)
+
+private fun PollResponse.canLoadResults(): Boolean {
+    val finished = hasStatus("FINISHED")
+    val soon = hasStatus("SOON")
+    return !soon && (!anonymous || finished)
 }
 
 class VotingViewModelFactory(
