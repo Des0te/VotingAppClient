@@ -329,7 +329,7 @@ private fun HomeScreen(
             }
             if (!state.isLoading && state.error == null && state.polls.isEmpty()) {
                 Text(
-                    text = if (state.searchText.isBlank()) "Активных голосований нет" else "Нет результатов поиска",
+                    text = if (state.searchText.isBlank()) "Голосований нет" else "Нет результатов поиска",
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(top = 24.dp),
                 )
@@ -420,6 +420,7 @@ private fun SearchPanel(state: VotingUiState, viewModel: VotingViewModel) {
 
 @Composable
 private fun PollItem(poll: PollResponse, currentUserId: String?, onClick: () -> Unit) {
+    val status = pollStatus(poll)
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -435,8 +436,12 @@ private fun PollItem(poll: PollResponse, currentUserId: String?, onClick: () -> 
                 }
             }
             Spacer(Modifier.height(6.dp))
+            Text(status.text, color = status.color())
             Text(if (poll.choiceType == "SINGLE") "Один вариант" else "Несколько вариантов")
-            Text("С ${poll.startsAt} до ${poll.endsAt}", style = MaterialTheme.typography.bodySmall)
+            if (poll.anonymous) {
+                Text("Анонимное")
+            }
+            Text("С ${localDate(poll.startsAt)} до ${localDate(poll.endsAt)}", style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -484,7 +489,10 @@ private fun DetailScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             item {
+                val status = pollStatus(poll)
                 Text(poll.question, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(status.text, color = status.color())
+                Text("С ${localDate(poll.startsAt)} до ${localDate(poll.endsAt)}")
                 Text(if (poll.anonymous) "Анонимное голосование" else "Открытая статистика")
             }
             items(poll.options) { option ->
@@ -517,12 +525,20 @@ private fun DetailScreen(
                 }
             }
             item {
+                val active = pollStatus(poll) == PollStatus.ACTIVE
                 Button(
                     onClick = { onVote(selected.toList()) },
-                    enabled = selected.isNotEmpty() && !state.isLoading,
+                    enabled = active && selected.isNotEmpty() && !state.isLoading,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text("Голосовать")
+                }
+                if (!active) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = if (pollStatus(poll) == PollStatus.SOON) "Голосование скоро начнётся" else "Голосование завершено",
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
                 }
                 state.message?.let {
                     Spacer(Modifier.height(8.dp))
@@ -533,7 +549,12 @@ private fun DetailScreen(
                     Text(it, color = MaterialTheme.colorScheme.error)
                 }
             }
-            state.results?.let { results ->
+            if (poll.anonymous && pollStatus(poll) != PollStatus.FINISHED) {
+                item {
+                    Text("Результаты анонимного голосования будут доступны после завершения")
+                }
+            }
+            if (canShowResults(poll)) state.results?.let { results ->
                 item {
                     ResultsBlock(results)
                 }
@@ -716,6 +737,48 @@ private fun CenteredColumn(content: @Composable ColumnScope.() -> Unit) {
         verticalArrangement = Arrangement.Center,
         content = content,
     )
+}
+
+private enum class PollStatus(val text: String) {
+    ACTIVE("Активно"),
+    SOON("Скоро начнётся"),
+    FINISHED("Завершено"),
+}
+
+@Composable
+private fun PollStatus.color() = when (this) {
+    PollStatus.ACTIVE -> MaterialTheme.colorScheme.primary
+    PollStatus.SOON -> MaterialTheme.colorScheme.tertiary
+    PollStatus.FINISHED -> MaterialTheme.colorScheme.secondary
+}
+
+private fun pollStatus(poll: PollResponse): PollStatus {
+    val now = System.currentTimeMillis()
+    val startsAt = parseServerDate(poll.startsAt) ?: return PollStatus.ACTIVE
+    val endsAt = parseServerDate(poll.endsAt) ?: return PollStatus.ACTIVE
+    return when {
+        now < startsAt -> PollStatus.SOON
+        now > endsAt -> PollStatus.FINISHED
+        else -> PollStatus.ACTIVE
+    }
+}
+
+private fun canShowResults(poll: PollResponse): Boolean =
+    !poll.anonymous || pollStatus(poll) == PollStatus.FINISHED
+
+private fun localDate(value: String): String {
+    val millis = parseServerDate(value) ?: return value
+    return dateTimeLabel(millis)
+}
+
+private fun parseServerDate(value: String): Long? {
+    return try {
+        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+        format.timeZone = TimeZone.getTimeZone("UTC")
+        format.parse(value)?.time
+    } catch (_: Exception) {
+        null
+    }
 }
 
 private fun showDateTimePicker(
