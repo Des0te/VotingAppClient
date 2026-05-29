@@ -47,6 +47,9 @@ class VotingViewModel(
             }
         }
         viewModelScope.launch {
+            settingsStore.clearOldHistory()
+        }
+        viewModelScope.launch {
             sessionStore.user.collectLatest { user ->
                 historyJob?.cancel()
                 state.value = state.value.copy(
@@ -58,9 +61,12 @@ class VotingViewModel(
                     results = null,
                 )
                 if (user != null) {
+                    val historyUserId = user.id
                     historyJob = viewModelScope.launch {
-                        settingsStore.historyFor(user.id).collectLatest { value ->
-                            state.value = state.value.copy(history = value)
+                        settingsStore.historyFor(historyUserId).collectLatest { value ->
+                            if (state.value.user?.id == historyUserId) {
+                                state.value = state.value.copy(history = value)
+                            }
                         }
                     }
                     loadActive()

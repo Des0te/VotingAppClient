@@ -13,6 +13,7 @@ private val Context.settingsDataStore by preferencesDataStore("settings")
 
 class SettingsStore(private val context: Context) {
     private val darkThemeKey = booleanPreferencesKey("dark_theme")
+    private val oldHistoryKey = stringPreferencesKey("search_history")
 
     val darkTheme: Flow<Boolean> = context.settingsDataStore.data.map { it[darkThemeKey] ?: false }
 
@@ -50,6 +51,10 @@ class SettingsStore(private val context: Context) {
     suspend fun clearHistory(userId: String?) {
         val key = historyKey(userId ?: return)
         context.settingsDataStore.edit { it.remove(key) }
+    }
+
+    suspend fun clearOldHistory() {
+        context.settingsDataStore.edit { it.remove(oldHistoryKey) }
     }
 
     private fun historyKey(userId: String) = stringPreferencesKey("search_history_$userId")
